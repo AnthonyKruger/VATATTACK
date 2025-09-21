@@ -1,5 +1,8 @@
 // Game values
 window.GameValues = {
+  limits: {
+    maxObjects: 50,
+  },
   colors: {
     accentStart: '#3cb3d8',
     accentEnd: '#9a36fe',

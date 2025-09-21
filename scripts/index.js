@@ -4,10 +4,8 @@ const GV = window.GameValues;
 let hudColor = '#eee';
 let catcherColor = '#fff';
 
-// Player (folder)
 let catcher = { x: 230, y: 560, w: 60, h: 25, speed: GV.player.baseSpeed };
 
-// Falling objects
 let objects = [];
 let score = 0;
 let highScore = parseInt(localStorage.getItem('vatAttackHighScore') || '0', 10);
@@ -25,13 +23,10 @@ const baseSpawnInterval = GV.spawn.baseInterval;
 let currentDifficultyLevel = 0;
 let currentSpawnInterval = baseSpawnInterval;
 
-
-// VATIT letter collection (V, A, T, I, T)
 const vatitOrder = ['v','a','t','i','t'];
-let nextVatitIndex = 0; // which letter to spawn next
-let collectedVatitCount = 0; // how many letters collected towards combo (0..5)
+let nextVatitIndex = 0;
+let collectedVatitCount = 0;
 
-// Quick canvas flash effect (on special pickups)
 const FLASH_DURATION_MS = GV.flash.durationMs;
 let flashEndAt = 0;
 /** Start a short screen flash overlay */
@@ -39,7 +34,6 @@ function startFlash() {
   flashEndAt = performance.now() + FLASH_DURATION_MS;
 }
 
-// Bonus text flicker when completing VATIT
 const BONUS_FLASH_MS = GV.bonus.durationMs;
 let bonusEndAt = 0;
 /** Trigger the center "BONUS!" flicker */
@@ -47,7 +41,6 @@ function triggerBonusFlash() {
   bonusEndAt = performance.now() + BONUS_FLASH_MS;
 }
 
-// Final score counting animation for Game Over popup
 const FINAL_COUNT_MS = GV.final.countMs;
 let finalCountRafId = null;
 /** Stop any active final score animation */
@@ -72,7 +65,6 @@ function animateFinalCount(toValue) {
   finalCountRafId = requestAnimationFrame(step);
 }
 
-// In-game HUD score count-up (1s) when score increases
 const SCORE_ANIM_MS = GV.hud.scoreAnimMs;
 let scoreAnimStart = 0;
 let scoreAnimFrom = 0;
@@ -94,7 +86,6 @@ function addScore(delta) {
   scoreAnimStart = now;
 }
 
-// Temporary invulnerability after missing an invoice (scales with difficulty)
 const BASE_INVUL_MS = GV.player.invulMs;
 let invulEndAt = 0;
 /** Begin temporary invulnerability; duration shrinks with difficulty */
@@ -104,9 +95,6 @@ function startInvul() {
 }
 function isInvul() { return performance.now() < invulEndAt; }
 
-// --------------------
-// Utils
-// --------------------
 function clamp(v, min, max) { return Math.max(min, Math.min(max, v)); }
 function chance(p) { return Math.random() < p; }
 
@@ -136,10 +124,8 @@ function recomputeDifficulty() {
   }
 }
 
-// Sprite images — single base SVG per sprite (tinted at draw time)
 let assets = {};
 function createSpriteSet(theme) {
-  // We load the light variant as the single base; we tint to theme color when drawing.
   const make = (name) => { const img = new Image(); img.src = `sprites/${name}.svg`; return img; };
   return {
     invoice: make('invoice'),
@@ -156,7 +142,7 @@ function createSpriteSet(theme) {
   };
 }
 
-// Offscreen tint helper: uses image alpha as mask and fills with color
+/** Offscreen tint helper: uses image alpha as mask and fills with color */
 function drawTintedSprite(ctx, img, x, y, w, h, color) {
   const off = drawTintedSprite._off || (drawTintedSprite._off = document.createElement('canvas'));
   const offCtx = drawTintedSprite._offCtx || (drawTintedSprite._offCtx = off.getContext('2d'));
@@ -191,7 +177,6 @@ function drawTintedSpriteThemed(ctx, img, x, y, w, h) {
   ctx.drawImage(off, x, y);
 }
 
-// Theme helpers
 function refreshThemeColors() {
   const styles = getComputedStyle(document.body);
   hudColor = styles.getPropertyValue('--fg').trim() || '#fff';
@@ -205,7 +190,7 @@ function applyTheme(theme) {
   assets = createSpriteSet(theme);
 }
 
-// Redraw overlay icon (Game Over) to reflect current theme color
+/** Redraw overlay icon (Game Over) to reflect current theme color */
 function redrawOverlayIcon() {
   const overlay = document.getElementById('overlay');
   if (!overlay) return;
@@ -220,9 +205,9 @@ function redrawOverlayIcon() {
   iconCanvas.classList.add('hidden');
   iconCanvas.style.display = 'none';
   let iconImg = null;
-  if (/Fraudulent Claim/i.test(message)) iconImg = assets.fraud;
-  else if (/Missed an Audit Notice/i.test(message)) iconImg = assets.audit;
-  else if (/Too Many Missed Claims/i.test(message)) iconImg = assets.invoice;
+  if (/Fraud Alert/i.test(message)) iconImg = assets.fraud;
+  else if (/Ignored the Auditor/i.test(message)) iconImg = assets.audit;
+  else if (/Claims Overflow/i.test(message)) iconImg = assets.invoice;
   if (!iconImg) return;
   const draw = () => {
     if (iconImg && iconImg.complete && iconImg.naturalWidth > 0) {
@@ -235,11 +220,10 @@ function redrawOverlayIcon() {
   else iconImg.addEventListener('load', draw, { once: true });
 }
 
-// Build the START overlay message with actual icons per line
+/** Build the START overlay message with actual icons per line */
 function renderStartMessage() {
   const msgEl = document.getElementById('overlay-message');
   if (!msgEl) return;
-  // Clear existing content
   msgEl.innerHTML = '';
 
   const fg = hudColor;
@@ -277,51 +261,39 @@ function renderStartMessage() {
     }
   };
 
-  // Controls block first
   const controlsWrap = document.createElement('div');
   controlsWrap.className = 'start-block';
   msgEl.appendChild(controlsWrap);
   makeLine(() => assets.controls, 'Use A ← → D to move', controlsWrap);
   makeLine(() => assets.controls, 'Use [SPACE] to pause', controlsWrap);
 
-  // Separator, then rules lines
   const sep = document.createElement('div');
   sep.className = 'start-sep';
   msgEl.appendChild(sep);
   lines.forEach(l => makeLine(l.img, l.text));
 }
 
-// Keyboard
 document.addEventListener("keydown", e => { keys[e.code] = true; });
 document.addEventListener("keyup", e => keys[e.code] = false);
 
 function spawnObject() {
   if (!gameRunning) return;
-  // Determine how many to spawn this tick based on difficulty multiplier
+  if (objects.length >= GV.limits.maxObjects) return;
   const mult = difficultyMultiplier();
-  // Expected count ~= 1 * mult. Spawn base + probabilistic extra for fractional part.
   let expected = mult;
   let count = 1 + Math.floor(expected);
   if (Math.random() < (expected - Math.floor(expected))) count += 1;
-
-  // Helper to check if an audit is already present
   const auditOnScreen = () => objects.some(o => o.type === 'audit');
-
-  // Compute dynamic probabilities for each drop
   const computeSpawnProbabilities = () => {
-    // Base probabilities
     const pFuel = 0.10;
     const pVatit = 0.05;
     const baseAudit = 0.10;
     const baseFraud = 0.10;
-    // Scale audit and fraud up by +5% per difficulty level (relative to base)
     const level = currentDifficultyLevel;
     const pAudit = Math.min(GV.probabilities.auditFraudCap, baseAudit * (1 + GV.probabilities.auditFraudScalePerLevel * level));
     const pFraud = Math.min(GV.probabilities.auditFraudCap, baseFraud * (1 + GV.probabilities.auditFraudScalePerLevel * level));
-    // Invoice absorbs remaining probability
     let pInvoice = 1 - (pFuel + pVatit + pAudit + pFraud);
     pInvoice = Math.max(GV.probabilities.invoiceMin, pInvoice);
-    // Normalize in case of clamping pushing sum > 1
     const sum = pInvoice + pFuel + pAudit + pFraud + pVatit;
     return {
       invoice: pInvoice / sum,
@@ -347,8 +319,8 @@ function spawnObject() {
   };
 
   const spawnOne = () => {
+    if (objects.length >= GV.limits.maxObjects) return;
     let type = chooseType();
-    // Enforce max 1 audit on screen at a time
     if (type === 'audit' && auditOnScreen()) {
       type = 'invoice';
     }
@@ -359,7 +331,6 @@ function spawnObject() {
       speed: GV.spawn.fallSpeedMin + Math.random() * GV.spawn.fallSpeedRange,
       type
     };
-    // Zig-zag chance scales with difficulty
     const zigChance = Math.min(GV.spawn.zigzagCap, GV.spawn.zigzagBase + GV.spawn.zigzagPerLevel * currentDifficultyLevel);
     if (chance(zigChance)) {
       obj.zigzag = true;
@@ -373,20 +344,19 @@ function spawnObject() {
     objects.push(obj);
   };
 
-  for (let i = 0; i < count; i++) spawnOne();
+  for (let i = 0; i < count; i++) {
+    if (objects.length >= GV.limits.maxObjects) break;
+    spawnOne();
+  }
 }
 
 // Update game state
 /** Main game loop: move, collide, draw, schedule next frame */
 function update() {
   if (!gameRunning) return;
-
-  // Move catcher
   if (keys["ArrowLeft"] || keys["KeyA"]) catcher.x -= catcher.speed;
   if (keys["ArrowRight"] || keys["KeyD"]) catcher.x += catcher.speed;
   catcher.x = Math.max(0, Math.min(canvas.width - catcher.w, catcher.x));
-
-  // Move objects
   objects.forEach(o => {
     if (o.zigzag) {
       o.x += o.zspeed * o.zdir;
@@ -395,11 +365,8 @@ function update() {
     }
     o.y += o.speed;
   });
-
-  // Collision detection
   let gameOverReason = null; // 'audit' | 'fraud' | null
   objects = objects.filter(o => {
-    // Out of bounds
     if (o.y > canvas.height) {
       if (o.type === "invoice") {
         if (!isInvul()) {
@@ -413,10 +380,8 @@ function update() {
           if (lives <= 0) gameOverReason = 'audit';
         }
       }
-      // deadlineFuel falling off-screen has no penalty
       return false;
     }
-    // Catch check
     if (o.x < catcher.x+catcher.w && o.x+o.w > catcher.x &&
         o.y < catcher.y+catcher.h && o.y+o.h > catcher.y) {
       if (o.type === "invoice") addScore(100);
@@ -428,12 +393,14 @@ function update() {
       }
       else if (o.type === "audit") addScore(500);
       else if (o.type === "deadlineFuel") {
-        lives += 1; // restore one life when collected
-        // no flash for deadline fuel pickups
+        if (!isInvul()) {
+          lives += 1; // restore one life when collected
+        }
       } else if (o.type === 'vatit') {
-        // Collect VATIT letter (progress combo regardless of pickup order)
         collectedVatitCount = Math.min(5, collectedVatitCount + 1);
-        lives += 1; // gain a life from VATIT pickup
+        if (!isInvul()) {
+          lives += 1; // gain a life from VATIT pickup
+        }
         addScore(1000);
         if (collectedVatitCount >= 5) {
           addScore(10000); // bonus for completing VATIT
@@ -446,43 +413,27 @@ function update() {
     }
     return true;
   });
-
-  // Lives check
   if (lives <= 0) {
-    if (gameOverReason === 'audit') endGame("Missed an Audit Notice!");
-    else if (gameOverReason === 'fraud') endGame("Filed a Fraudulent Claim!");
-    else endGame("Too Many Missed Claims!");
+    if (gameOverReason === 'audit') endGame("Ignored the Auditor!");
+    else if (gameOverReason === 'fraud') endGame("Fraud Alert!");
+    else endGame("Claims Overflow!");
   }
-
-  // Ramp difficulty as score crosses thresholds
   if (gameRunning) recomputeDifficulty();
-
-  // If the game ended during this update, stop drawing the normal scene
   if (!gameRunning) return;
-
-  // Draw
   ctx.clearRect(0,0,canvas.width,canvas.height);
-
   drawCatcher();
-
-  // Objects
   objects.forEach(o => {
     const img = (o.type === 'vatit') ? assets[o.letter] : assets[o.type];
     if (img && img.complete && img.naturalWidth > 0) {
       drawTintedSpriteThemed(ctx, img, o.x, o.y, o.w, o.h);
     } else {
-      // minimal fallback: draw a box until image loads
       ctx.strokeStyle = hudColor;
       ctx.strokeRect(o.x, o.y, o.w, o.h);
     }
   });
-
   drawHUD();
-
   drawFlashOverlay();
   drawBonusOverlay();
-
-  // Draw collected VATIT letters (top-right), always in VATIT order
   if (collectedVatitCount > 0) {
     const size = 20;
     const gap = 4;
@@ -505,18 +456,14 @@ function update() {
   rafId = requestAnimationFrame(update);
 }
 
-// --------------------
-// Drawing helpers
-// --------------------
+/** Drawing helpers */
 function drawCatcher() {
-  // Catcher (draw tinted sprite) with invulnerability flicker
   const invulActive = isInvul();
   const showCatcher = !invulActive || ((Math.floor(performance.now() / 100) % 2) === 0);
   if (!showCatcher) return;
   if (assets.catcher && assets.catcher.complete && assets.catcher.naturalWidth > 0) {
     drawTintedSpriteThemed(ctx, assets.catcher, catcher.x, catcher.y, catcher.w, catcher.h);
   } else {
-    // fallback if image not loaded yet
     ctx.fillStyle = catcherColor;
     ctx.fillRect(catcher.x, catcher.y, catcher.w, catcher.h);
   }
@@ -614,9 +561,9 @@ function endGame(message) {
     iconCanvas.classList.add('hidden');
     iconCanvas.style.display = 'none';
     let iconImg = null;
-    if (/Fraudulent Claim/i.test(message)) iconImg = assets.fraud;
-    else if (/Missed an Audit Notice/i.test(message)) iconImg = assets.audit;
-    else if (/Too Many Missed Claims/i.test(message)) iconImg = assets.invoice;
+    if (/Fraud Alert/i.test(message)) iconImg = assets.fraud;
+    else if (/Ignored the Auditor/i.test(message)) iconImg = assets.audit;
+    else if (/Claims Overflow/i.test(message)) iconImg = assets.invoice;
     if (iconImg && iconImg.complete && iconImg.naturalWidth > 0) {
       drawTintedSpriteThemed(iconCtx, iconImg, 0, 0, iconCanvas.width, iconCanvas.height);
       iconCanvas.classList.remove('hidden');
@@ -771,12 +718,7 @@ document.addEventListener('DOMContentLoaded', () => {
     }
   });
 
-  // Click on backdrop to start
-  overlay.addEventListener('pointerdown', (e) => {
-    if (e.target.id !== 'overlay') return;
-    const mode = overlay.getAttribute('data-mode');
-    if (mode === 'start') resetGame();
-  });
+  // Disable backdrop-to-start; only Start button or Space should start
 
   // Global Space toggles pause when overlay hidden
   document.addEventListener('keydown', (e) => {
