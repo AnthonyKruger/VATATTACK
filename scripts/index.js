@@ -439,8 +439,9 @@ function update() {
     const size = 20;
     const gap = 4;
     const totalW = collectedVatitCount * (size + gap) - gap;
-    let x = canvas.width - 10 - totalW;
-    const y = 10;
+    // Position under HUD Lives line (which is at y ~ 40 with 32px font)
+    let x = 10;
+    const y = 60; // slightly below Lives text
     for (let i = 0; i < collectedVatitCount; i++) {
       const letterKey = vatitOrder[i];
       const img = assets[letterKey];
