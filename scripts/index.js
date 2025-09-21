@@ -421,6 +421,7 @@ function update() {
   if (gameRunning) recomputeDifficulty();
   if (!gameRunning) return;
   ctx.clearRect(0,0,canvas.width,canvas.height);
+  if (gameState !== 'playing') { rafId = requestAnimationFrame(update); return; }
   drawCatcher();
   objects.forEach(o => {
     const img = (o.type === 'vatit') ? assets[o.letter] : assets[o.type];
@@ -493,7 +494,16 @@ function drawFlashOverlay() {
     const alpha = window.GameValues.flash.maxAlpha * ratio;
     ctx.save();
     ctx.globalAlpha = alpha;
-    ctx.fillStyle = hudColor; // opposite of bg
+    // If foreground is white (dark theme), use solid white; else use accent gradient
+    const isWhiteFG = (currentTheme === 'dark') || (/^#?fff$/i.test(hudColor.trim()));
+    if (isWhiteFG) {
+      ctx.fillStyle = '#ffffff';
+    } else {
+      const g = ctx.createLinearGradient(0, 0, canvas.width, 0);
+      g.addColorStop(0, window.GameValues.colors.accentStart);
+      g.addColorStop(1, window.GameValues.colors.accentEnd);
+      ctx.fillStyle = g;
+    }
     ctx.fillRect(0, 0, canvas.width, canvas.height);
     ctx.restore();
   } else {
@@ -527,11 +537,9 @@ function endGame(message) {
   gameRunning = false;
   // Ensure HUD reflects final lives immediately
   lives = Math.max(0, lives);
-  ctx.clearRect(0, 0, 230, 50);
-  ctx.fillStyle = (currentTheme === 'light') ? hudGradient() : hudColor;
-  ctx.font = window.GameValues.hud.font;
-  ctx.fillText("VAT Reclaimed: €" + score, 10, 20);
-  ctx.fillText("Lives: " + lives, 10, 40);
+  // Immediately clear full canvas so all gameplay and HUD text are hidden
+  ctx.clearRect(0, 0, canvas.width, canvas.height);
+  // Do not redraw any HUD on game over; overlay handles presentation
 
   // Show centered DOM overlay popup
   const overlay = document.getElementById("overlay");
@@ -708,6 +716,9 @@ document.addEventListener('DOMContentLoaded', () => {
       else if (typeof e.stopPropagation === 'function') e.stopPropagation();
       resetGame();
     } else if (mode === 'over' && (e.code === 'Enter' || e.code === 'Space')) {
+      e.preventDefault();
+      if (typeof e.stopImmediatePropagation === 'function') e.stopImmediatePropagation();
+      else if (typeof e.stopPropagation === 'function') e.stopPropagation();
       resetGame();
     } else if (mode === 'paused' && e.code === 'Space') {
       e.preventDefault();
@@ -720,11 +731,12 @@ document.addEventListener('DOMContentLoaded', () => {
 
   // Disable backdrop-to-start; only Start button or Space should start
 
-  // Global Space toggles pause when overlay hidden
+  // Global Space toggles pause only during active play when overlay hidden
   document.addEventListener('keydown', (e) => {
     if (e.code !== 'Space') return;
     const overlayShown = overlay.style.display === 'flex';
     if (overlayShown) return;
+    if (gameState !== 'playing') return;
     e.preventDefault();
     if (gameRunning) pauseGame();
   });

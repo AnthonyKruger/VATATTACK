@@ -44,7 +44,7 @@ window.GameValues = {
   },
   hud: {
     scoreAnimMs: 1000,
-    font: "16px 'boldpixels', sans-serif",
+    font: "32px 'boldpixels', sans-serif",
   },
   probabilities: {
     fuel: 0.10,
