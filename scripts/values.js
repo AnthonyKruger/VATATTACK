@@ -1,1 +1,58 @@
-window.GameValues={limits:{maxObjects:50},colors:{accentStart:"#3cb3d8",accentEnd:"#9a36fe"},player:{baseSpeed:4.5,invulMs:3e3,invulMinMs:500,invulFlickerMs:100},spawn:{baseInterval:1300,minInterval:100,fallSpeedMin:1.5,fallSpeedRange:2,zigzagBase:.05,zigzagPerLevel:.01,zigzagCap:.5},spawnArea:{width:460},difficulty:{stepPerLevel:.1,pointsPerLevel:2e3},flash:{durationMs:200,maxAlpha:.5},bonus:{durationMs:3e3,flickerMs:150,text:"BONUS!",font:"48px 'Ka', sans-serif"},final:{countMs:3e3},hud:{scoreAnimMs:1e3,font:"32px 'boldpixels', sans-serif"},probabilities:{fuel:.1,vatit:.05,auditBase:.1,fraudBase:.1,auditFraudScalePerLevel:.05,auditFraudCap:.5,invoiceMin:.05}};
+window.GameValues = {
+    limits: {
+        maxObjects: 50
+    },
+    colors: {
+        accentStart: "#3cb3d8",
+        accentEnd: "#9a36fe"
+    },
+    player: {
+        baseSpeed: 4.5,
+        invulMs: 3e3,
+        invulMinMs: 500,
+        invulFlickerMs: 100
+    },
+    spawn: {
+        baseInterval: 2600,
+        minInterval: 100,
+        fallSpeedMin: 1.2,
+        fallSpeedRange: 1.6,
+        zigzagBase: .05,
+        zigzagPerLevel: .01,
+        zigzagCap: .5
+    },
+    spawnArea: {
+        width: 460
+    },
+    difficulty: {
+        stepPerLevel: .05,
+        pointsPerLevel: 2e3
+    },
+    flash: {
+        durationMs: 200,
+        maxAlpha: .5
+    },
+    bonus: {
+        durationMs: 3e3,
+        flickerMs: 150,
+        text: "BONUS!",
+        font: "48px 'Ka', sans-serif"
+    },
+    final: {
+        countMs: 3e3
+    },
+    hud: {
+        scoreAnimMs: 1e3,
+        font: "32px 'boldpixels', sans-serif"
+    },
+    probabilities: {
+        fuel: .1,
+        vatit: .05,
+        auditBase: .1,
+        fraudBase: .1,
+        auditFraudScalePerLevel: .05,
+        auditFraudCap: .5,
+        invoiceMin: .05,
+        coffee: .05
+    }
+};

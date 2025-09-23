@@ -1,1 +1,688 @@
-const canvas = document.getElementById("game"), ctx = canvas.getContext("2d"), GV = window.GameValues; let hudColor = "#eee", catcherColor = "#fff", catcher = { x: 230, y: 560, w: 60, h: 25, speed: GV.player.baseSpeed }, objects = [], score = 0, highScore = parseInt(localStorage.getItem("vatAttackHighScore") || "0", 10), lives = 3, keys = {}, gameRunning = !0, spawnTimerId = null, rafId = null, currentTheme = localStorage.getItem("vatAttackTheme") || "light", gameState = "start"; const baseCatcherSpeed = GV.player.baseSpeed, baseSpawnInterval = GV.spawn.baseInterval; let currentDifficultyLevel = 0, currentSpawnInterval = baseSpawnInterval; const vatitOrder = ["v", "a", "t", "i", "t"]; let nextVatitIndex = 0, collectedVatitCount = 0; const FLASH_DURATION_MS = GV.flash.durationMs; let flashEndAt = 0; function startFlash() { flashEndAt = performance.now() + FLASH_DURATION_MS } const BONUS_FLASH_MS = GV.bonus.durationMs; let bonusEndAt = 0; function triggerBonusFlash() { bonusEndAt = performance.now() + BONUS_FLASH_MS } const FINAL_COUNT_MS = GV.final.countMs; let finalCountRafId = null; function cancelFinalCountAnim() { finalCountRafId && (cancelAnimationFrame(finalCountRafId), finalCountRafId = null) } function animateFinalCount(e) { cancelFinalCountAnim(); let t = document.getElementById("overlay-final"); if (!t) return; let a = { t: 0 }, n = l => { a.t || (a.t = l); let r = Math.min(1, (l - a.t) / FINAL_COUNT_MS); t.textContent = "Final VAT Reclaimed: €" + Math.floor(r * e), finalCountRafId = r < 1 ? requestAnimationFrame(n) : null }; t.textContent = "Final VAT Reclaimed: €0", finalCountRafId = requestAnimationFrame(n) } const SCORE_ANIM_MS = GV.hud.scoreAnimMs; let scoreAnimStart = 0, scoreAnimFrom = 0, scoreAnimTo = 0; function getDisplayedScore(e) { if (0 === scoreAnimStart || scoreAnimTo <= scoreAnimFrom) return score; let t = (e - scoreAnimStart) / SCORE_ANIM_MS; return t >= 1 ? (scoreAnimStart = 0, scoreAnimFrom = scoreAnimTo, scoreAnimTo) : Math.floor(scoreAnimFrom + t * (scoreAnimTo - scoreAnimFrom)) } function addScore(e) { let t = performance.now(), a = getDisplayedScore(t); score += e, scoreAnimFrom = a, scoreAnimTo = score, scoreAnimStart = t } const BASE_INVUL_MS = GV.player.invulMs; let invulEndAt = 0; function startInvul() { let e = Math.max(500, Math.round(BASE_INVUL_MS / difficultyMultiplier())); invulEndAt = performance.now() + e } function isInvul() { return performance.now() < invulEndAt } function clamp(e, t, a) { return Math.max(t, Math.min(a, e)) } function chance(e) { return Math.random() < e } function difficultyMultiplier() { return 1 + GV.difficulty.stepPerLevel * currentDifficultyLevel } function applyDifficulty() { let e = difficultyMultiplier(); catcher.speed = baseCatcherSpeed * e; let t = Math.max(GV.spawn.minInterval, Math.round(baseSpawnInterval / e)); t !== currentSpawnInterval && (currentSpawnInterval = t, spawnTimerId && (clearInterval(spawnTimerId), spawnTimerId = null), spawnTimerId = setInterval(spawnObject, currentSpawnInterval)) } function recomputeDifficulty() { let e = Math.floor(score / GV.difficulty.pointsPerLevel); e !== currentDifficultyLevel && (currentDifficultyLevel = e, applyDifficulty()) } let assets = {}; function createSpriteSet(e) { let t = e => { let t = new Image; return t.src = `sprites/${e}.svg`, t }; return { invoice: t("invoice"), fraud: t("fraud"), audit: t("audit"), deadlineFuel: t("deadlineFuel"), catcher: t("catcher"), controls: t("controls"), v: t("v"), a: t("a"), t: t("t"), i: t("i") } } function drawTintedSprite(e, t, a, n, l, r, i) { let s = drawTintedSprite._off || (drawTintedSprite._off = document.createElement("canvas")), o = drawTintedSprite._offCtx || (drawTintedSprite._offCtx = s.getContext("2d")); s.width = l, s.height = r, o.clearRect(0, 0, l, r), o.drawImage(t, 0, 0, l, r), o.globalCompositeOperation = "source-in", o.fillStyle = i, o.fillRect(0, 0, l, r), o.globalCompositeOperation = "source-over", e.drawImage(s, a, n) } function drawTintedSpriteThemed(e, t, a, n, l, r) { let i = drawTintedSprite._off || (drawTintedSprite._off = document.createElement("canvas")), s = drawTintedSprite._offCtx || (drawTintedSprite._offCtx = i.getContext("2d")); if (i.width = l, i.height = r, s.clearRect(0, 0, l, r), s.drawImage(t, 0, 0, l, r), s.globalCompositeOperation = "source-in", "light" === currentTheme && window.GameValues && window.GameValues.colors) { let o = s.createLinearGradient(0, 0, l, 0); o.addColorStop(0, window.GameValues.colors.accentStart), o.addColorStop(1, window.GameValues.colors.accentEnd), s.fillStyle = o } else s.fillStyle = hudColor; s.fillRect(0, 0, l, r), s.globalCompositeOperation = "source-over", e.drawImage(i, a, n) } function refreshThemeColors() { let e = getComputedStyle(document.body); catcherColor = hudColor = e.getPropertyValue("--fg").trim() || "#fff" } function applyTheme(e) { currentTheme = e, document.body.setAttribute("data-theme", e), localStorage.setItem("vatAttackTheme", e), refreshThemeColors(), assets = createSpriteSet(e) } function redrawOverlayIcon() { let e = document.getElementById("overlay"); if (!e) return; let t = e.getAttribute("data-mode"); if ("over" !== t) return; let a = document.getElementById("overlay-message"), n = document.getElementById("overlay-icon"); if (!a || !n) return; let l = a.textContent || "", r = n.getContext("2d"); r.clearRect(0, 0, n.width, n.height), n.classList.add("hidden"), n.style.display = "none"; let i = null; if (/Fraud Alert/i.test(l) ? i = assets.fraud : /Ignored the Auditor/i.test(l) ? i = assets.audit : /Claims Overflow/i.test(l) && (i = assets.invoice), !i) return; let s = () => { i && i.complete && i.naturalWidth > 0 && (drawTintedSpriteThemed(r, i, 0, 0, n.width, n.height), n.classList.remove("hidden"), n.style.display = "block") }; i.complete && i.naturalWidth > 0 ? s() : i.addEventListener("load", s, { once: !0 }) } function renderStartMessage() { let e = document.getElementById("overlay-message"); if (!e) return; e.innerHTML = ""; let t = [{ img: () => assets.invoice, text: "Gotta cath all 'em Invoices!" }, { img: () => assets.fraud, text: "Avoid fraudulent claims" }, { img: () => assets.audit, text: "Don't miss audit notices" }, { img: () => assets.deadlineFuel, text: "Dealine Fuel saves lives" },], a = (t, a, n = e) => { let l = document.createElement("div"); l.className = "start-line"; let r = document.createElement("canvas"); r.width = 24, r.height = 24, r.className = "icon-canvas", l.appendChild(r); let i = document.createElement("span"); i.textContent = a, l.appendChild(i), n.appendChild(l); let s = t(), o = () => { let e = r.getContext("2d"); e.clearRect(0, 0, r.width, r.height), s && s.complete && s.naturalWidth > 0 && drawTintedSpriteThemed(e, s, 0, 0, r.width, r.height) }; s && (s.complete && s.naturalWidth > 0 ? o() : s.addEventListener("load", o, { once: !0 })) }, n = document.createElement("div"); n.className = "start-block", e.appendChild(n), a(() => assets.controls, "Use A ← → D to move", n), a(() => assets.controls, "Use [SPACE] to pause", n); let l = document.createElement("div"); l.className = "start-sep", e.appendChild(l), t.forEach(e => a(e.img, e.text)) } function spawnObject() { if (!gameRunning || objects.length >= GV.limits.maxObjects) return; let e = difficultyMultiplier(), t = e, a = 1 + Math.floor(t); Math.random() < t - Math.floor(t) && (a += 1); let n = () => objects.some(e => "audit" === e.type), l = () => { let e = currentDifficultyLevel, t = Math.min(GV.probabilities.auditFraudCap, .1 * (1 + GV.probabilities.auditFraudScalePerLevel * e)), a = Math.min(GV.probabilities.auditFraudCap, .1 * (1 + GV.probabilities.auditFraudScalePerLevel * e)), n = 1 - (.1 + .05 + t + a); n = Math.max(GV.probabilities.invoiceMin, n); let l = n + .1 + t + a + .05; return { invoice: n / l, deadlineFuel: .1 / l, audit: t / l, fraud: a / l, vatit: .05 / l } }, r = () => { let { invoice: e, deadlineFuel: t, audit: a, fraud: n, vatit: r } = l(), i = Math.random(), s = e, o = s + t, d = o + a; return i < s ? "invoice" : i < o ? "deadlineFuel" : i < d ? "audit" : i < d + n ? "fraud" : "vatit" }, i = () => { if (objects.length >= GV.limits.maxObjects) return; let e = r(); "audit" === e && n() && (e = "invoice"); let t = { x: Math.random() * GV.spawnArea.width, y: -20, w: 40, h: 40, speed: GV.spawn.fallSpeedMin + Math.random() * GV.spawn.fallSpeedRange, type: e }, a = Math.min(GV.spawn.zigzagCap, GV.spawn.zigzagBase + GV.spawn.zigzagPerLevel * currentDifficultyLevel); chance(a) && (t.zigzag = !0, t.zdir = .5 > Math.random() ? -1 : 1, t.zspeed = 1 + 1.5 * Math.random()), "vatit" === e && (t.letter = vatitOrder[nextVatitIndex], nextVatitIndex = (nextVatitIndex + 1) % vatitOrder.length), objects.push(t) }; for (let s = 0; s < a && !(objects.length >= GV.limits.maxObjects); s++)i() } function update() { if (!gameRunning) return; (keys.ArrowLeft || keys.KeyA) && (catcher.x -= catcher.speed), (keys.ArrowRight || keys.KeyD) && (catcher.x += catcher.speed), catcher.x = Math.max(0, Math.min(canvas.width - catcher.w, catcher.x)), objects.forEach(e => { e.zigzag && (e.x += e.zspeed * e.zdir, e.x <= 0 ? (e.x = 0, e.zdir = 1) : e.x >= canvas.width - e.w && (e.x = canvas.width - e.w, e.zdir = -1)), e.y += e.speed }); let e = null; if (objects = objects.filter(t => t.y > canvas.height ? ("invoice" === t.type && !isInvul() && --lives > 0 && startInvul(), "audit" === t.type && !isInvul() && (lives -= 3) <= 0 && (e = "audit"), !1) : !(t.x < catcher.x + catcher.w) || !(t.x + t.w > catcher.x) || !(t.y < catcher.y + catcher.h) || !(t.y + t.h > catcher.y) || ("invoice" === t.type ? addScore(100) : "fraud" === t.type ? !isInvul() && (lives -= 3) <= 0 && (e = "fraud") : "audit" === t.type ? addScore(500) : "deadlineFuel" === t.type ? isInvul() || (lives += 1) : "vatit" === t.type && (collectedVatitCount = Math.min(5, collectedVatitCount + 1), isInvul() || (lives += 1), addScore(1e3), collectedVatitCount >= 5 && (addScore(1e4), collectedVatitCount = 0, triggerBonusFlash()), startFlash()), !1)), lives <= 0 && ("audit" === e ? endGame("Ignored the Auditor!") : "fraud" === e ? endGame("Fraud Alert!") : endGame("Claims Overflow!")), gameRunning && recomputeDifficulty(), gameRunning) { if (ctx.clearRect(0, 0, canvas.width, canvas.height), "playing" !== gameState) { rafId = requestAnimationFrame(update); return } if (drawCatcher(), objects.forEach(e => { let t = "vatit" === e.type ? assets[e.letter] : assets[e.type]; t && t.complete && t.naturalWidth > 0 ? drawTintedSpriteThemed(ctx, t, e.x, e.y, e.w, e.h) : (ctx.strokeStyle = hudColor, ctx.strokeRect(e.x, e.y, e.w, e.h)) }), drawHUD(), drawFlashOverlay(), drawBonusOverlay(), collectedVatitCount > 0) { let t = 10; for (let a = 0; a < collectedVatitCount; a++) { let n = vatitOrder[a], l = assets[n]; l && l.complete && l.naturalWidth > 0 ? drawTintedSpriteThemed(ctx, l, t, 60, 20, 20) : (ctx.strokeStyle = hudColor, ctx.strokeRect(t, 60, 20, 20)), t += 24 } } rafId = requestAnimationFrame(update) } } function drawCatcher() { let e = isInvul(), t = !e || Math.floor(performance.now() / 100) % 2 == 0; t && (assets.catcher && assets.catcher.complete && assets.catcher.naturalWidth > 0 ? drawTintedSpriteThemed(ctx, assets.catcher, catcher.x, catcher.y, catcher.w, catcher.h) : (ctx.fillStyle = catcherColor, ctx.fillRect(catcher.x, catcher.y, catcher.w, catcher.h))) } function hudGradient() { let e = ctx.createLinearGradient(0, 0, canvas.width, 0); return e.addColorStop(0, window.GameValues.colors.accentStart), e.addColorStop(1, window.GameValues.colors.accentEnd), e } function drawHUD() { ctx.fillStyle = "light" === currentTheme ? hudGradient() : hudColor, ctx.font = window.GameValues.hud.font; let e = getDisplayedScore(performance.now()); ctx.fillText("VAT Reclaimed: €" + e, 10, 20), ctx.fillText("Lives: " + lives, 10, 40) } function drawFlashOverlay() { if (flashEndAt <= 0) return; let e = performance.now(), t = flashEndAt - e; if (t > 0) { let a = window.GameValues.flash.maxAlpha * Math.max(0, Math.min(1, t / FLASH_DURATION_MS)); ctx.save(), ctx.globalAlpha = a; let n = "dark" === currentTheme || /^#?fff$/i.test(hudColor.trim()); if (n) ctx.fillStyle = "#ffffff"; else { let l = ctx.createLinearGradient(0, 0, canvas.width, 0); l.addColorStop(0, window.GameValues.colors.accentStart), l.addColorStop(1, window.GameValues.colors.accentEnd), ctx.fillStyle = l } ctx.fillRect(0, 0, canvas.width, canvas.height), ctx.restore() } else flashEndAt = 0 } function drawBonusOverlay() { if (bonusEndAt <= 0) return; let e = performance.now(), t = bonusEndAt - e; if (t > 0) { let a = Math.floor(e / window.GameValues.bonus.flickerMs) % 2 == 0; if (!a) return; ctx.save(), ctx.fillStyle = "light" === currentTheme ? hudGradient() : hudColor, ctx.font = window.GameValues.bonus.font; let n = window.GameValues.bonus.text, l = ctx.measureText(n).width, r = (canvas.width - l) / 2, i = canvas.height / 2; ctx.fillText(n, r, i), ctx.restore() } else bonusEndAt = 0 } function endGame(e) { gameRunning = !1, lives = Math.max(0, lives), ctx.clearRect(0, 0, canvas.width, canvas.height); let t = document.getElementById("overlay"), a = document.getElementById("overlay-message"); document.getElementById("overlay-final"); let n = document.getElementById("overlay-high"), l = t.querySelector(".title"); t.querySelector(".modal"); let r = document.getElementById("start-game"), i = document.getElementById("play-again"), s = document.getElementById("resume-game"), o = document.getElementById("overlay-icon"); a.textContent = e, animateFinalCount(score); let d = document.getElementById("final-sep"); d && (d.style.display = "none"); let c = document.getElementById("sep-after-title"); c && (c.style.display = "none"); let u = document.getElementById("sep-after-high"); if (u && (u.style.display = "none"), o) { let m = o.getContext("2d"); m.clearRect(0, 0, o.width, o.height), o.classList.add("hidden"), o.style.display = "none"; let f = null; /Fraud Alert/i.test(e) ? f = assets.fraud : /Ignored the Auditor/i.test(e) ? f = assets.audit : /Claims Overflow/i.test(e) && (f = assets.invoice), f && f.complete && f.naturalWidth > 0 && (drawTintedSpriteThemed(m, f, 0, 0, o.width, o.height), o.classList.remove("hidden"), o.style.display = "block") } let p = score > highScore; p && (highScore = score, localStorage.setItem("vatAttackHighScore", String(highScore))), n && (n.textContent = p ? "New High Score: €" + highScore : "High Score: €" + highScore), n && n.classList.toggle("new-high", p), t.style.display = "flex", gameState = "over", t.setAttribute("data-mode", "over"), l.textContent = "GAME OVER", l.style.color = "var(--fg)", r.classList.add("hidden"), i.classList.remove("hidden"), s && s.classList.add("hidden"), spawnTimerId && (clearInterval(spawnTimerId), spawnTimerId = null), rafId && (cancelAnimationFrame(rafId), rafId = null); let h = document.getElementById("status"); h && (h.innerText = "") } function resetGame() { score = 0, lives = 3, objects = [], catcher.x = (canvas.width - catcher.w) / 2, keys = {}, collectedVatitCount = 0, nextVatitIndex = 0, bonusEndAt = 0, flashEndAt = 0, cancelFinalCountAnim(), scoreAnimStart = 0, scoreAnimFrom = 0, scoreAnimTo = 0, document.getElementById("overlay").style.display = "none", startGame() } function startGame() { spawnTimerId && (clearInterval(spawnTimerId), spawnTimerId = null), rafId && (cancelAnimationFrame(rafId), rafId = null), gameRunning = !0, gameState = "playing", currentDifficultyLevel = Math.floor(score / 2e3), currentSpawnInterval = baseSpawnInterval, applyDifficulty(), spawnTimerId || (spawnTimerId = setInterval(spawnObject, currentSpawnInterval)), update() } function pauseGame() { if (!gameRunning) return; gameRunning = !1, gameState = "paused", spawnTimerId && (clearInterval(spawnTimerId), spawnTimerId = null), rafId && (cancelAnimationFrame(rafId), rafId = null); let e = document.getElementById("overlay"), t = e.querySelector(".title"); e.querySelector(".modal"); let a = document.getElementById("overlay-message"), n = document.getElementById("overlay-final"), l = document.getElementById("overlay-high"), r = document.getElementById("start-game"), i = document.getElementById("play-again"), s = document.getElementById("resume-game"); e.style.display = "flex", e.setAttribute("data-mode", "paused"), t.textContent = "Paused", t.style.color = "var(--fg)", a.textContent = "", n.textContent = "Press Space to resume"; let o = document.getElementById("final-sep"); o && (o.style.display = "none"); let d = document.getElementById("sep-after-title"); d && (d.style.display = "none"); let c = document.getElementById("sep-after-high"); c && (c.style.display = "none"), l && (l.textContent = "High Score: €" + highScore), r.classList.add("hidden"), i.classList.add("hidden"), s.classList.remove("hidden"), l && l.classList.remove("new-high"); let u = document.getElementById("overlay-icon"); u && (u.classList.add("hidden"), u.style.display = "none") } function resumeGame() { let e = document.getElementById("overlay"); e.style.display = "none", cancelFinalCountAnim(), startGame() } document.addEventListener("keydown", e => { keys[e.code] = !0 }), document.addEventListener("keyup", e => keys[e.code] = !1), document.addEventListener("DOMContentLoaded", () => { let e = document.getElementById("start-game"), t = document.getElementById("play-again"), a = document.getElementById("resume-game"), n = document.getElementById("overlay"), l = n.querySelector(".title"), r = n.querySelector(".modal"); document.getElementById("overlay-message"); let i = document.getElementById("overlay-final"), s = document.getElementById("overlay-high"), o = document.getElementById("theme-toggle"), d = document.getElementById("overlay-icon"); applyTheme(currentTheme), ctx.imageSmoothingEnabled = !1, n.style.display = "flex", n.setAttribute("data-mode", "start"), l.textContent = "VAT ATTACK!", l.style.color = "var(--fg)"; let c = document.getElementById("sep-after-title"); c || ((c = document.createElement("div")).id = "sep-after-title", c.className = "start-sep", r.insertBefore(c, document.getElementById("overlay-message"))), c.style.display = "block", s && (r.insertBefore(s, document.getElementById("overlay-message")), s.textContent = "High Score: €" + highScore, s.classList.remove("new-high")); let u = document.getElementById("sep-after-high"); u || ((u = document.createElement("div")).id = "sep-after-high", u.className = "start-sep", r.insertBefore(u, document.getElementById("overlay-message"))), u.style.display = "block", renderStartMessage(), i.textContent = "Press Start or Space to begin"; let m = document.getElementById("final-sep"); !m && ((m = document.createElement("div")).id = "final-sep", m.className = "start-sep", i && i.parentNode && i.parentNode.insertBefore(m, i)), m && (m.style.display = "block"), e.classList.remove("hidden"), t.classList.add("hidden"), a.classList.add("hidden"), r && r.classList.remove("new-high"), d && (d.classList.add("hidden"), d.style.display = "none"), e && e.addEventListener("click", resetGame), t && t.addEventListener("click", resetGame), a && a.addEventListener("click", () => resumeGame()), o && o.addEventListener("click", () => { applyTheme("dark" === currentTheme ? "light" : "dark"); let e = n.getAttribute("data-mode"); "start" === e ? renderStartMessage() : "over" === e && redrawOverlayIcon() }), document.addEventListener("keydown", e => { let t = "flex" === n.style.display, a = n.getAttribute("data-mode"); t && ("start" === a && "Space" === e.code ? (e.preventDefault(), "function" == typeof e.stopImmediatePropagation ? e.stopImmediatePropagation() : "function" == typeof e.stopPropagation && e.stopPropagation(), resetGame()) : "over" === a && ("Enter" === e.code || "Space" === e.code) ? (e.preventDefault(), "function" == typeof e.stopImmediatePropagation ? e.stopImmediatePropagation() : "function" == typeof e.stopPropagation && e.stopPropagation(), resetGame()) : "paused" === a && "Space" === e.code && (e.preventDefault(), "function" == typeof e.stopImmediatePropagation ? e.stopImmediatePropagation() : "function" == typeof e.stopPropagation && e.stopPropagation(), resumeGame())) }), document.addEventListener("keydown", e => { if ("Space" !== e.code) return; let t = "flex" === n.style.display; !t && "playing" === gameState && (e.preventDefault(), gameRunning && pauseGame()) }) });
+const canvas = document.getElementById("game"),
+    ctx = canvas.getContext("2d"),
+    GV = window.GameValues;
+
+let hudColor = "#eee",
+    catcherColor = "#fff",
+    catcher = {
+        x: 230,
+        y: 560,
+        w: 60,
+        h: 25,
+        speed: GV.player.baseSpeed
+    }
+
+    ,
+    objects = [],
+    score = 0,
+    highScore = parseInt(localStorage.getItem("vatAttackHighScore") || "0", 10),
+    lives = 3,
+    keys = {}
+
+    ,
+    gameRunning = !0,
+    spawnTimerId = null,
+    rafId = null,
+    currentTheme = localStorage.getItem("vatAttackTheme") || "light",
+    gameState = "start";
+const baseCatcherSpeed = GV.player.baseSpeed,
+    baseSpawnInterval = GV.spawn.baseInterval;
+let currentDifficultyLevel = 0,
+    currentSpawnInterval = baseSpawnInterval;
+const vatitOrder = ["v",
+    "a",
+    "t",
+    "i",
+    "t"
+];
+let nextVatitIndex = 0,
+    collectedVatitCount = 0;
+const FLASH_DURATION_MS = GV.flash.durationMs;
+let flashEndAt = 0;
+
+function startFlash() {
+    flashEndAt = performance.now() + FLASH_DURATION_MS
+}
+
+const BONUS_FLASH_MS = GV.bonus.durationMs;
+let bonusEndAt = 0;
+
+function triggerBonusFlash() {
+    bonusEndAt = performance.now() + BONUS_FLASH_MS
+}
+
+// Unified flicker message (center screen) to avoid overlap
+let flickerMessage = null; // { text: string, until: number }
+const FLICKER_DEFAULT_MS = 10000;
+
+function showFlickerMessage(text, durationMs = FLICKER_DEFAULT_MS) {
+    flickerMessage = { text, until: performance.now() + durationMs };
+}
+
+const FINAL_COUNT_MS = GV.final.countMs;
+let finalCountRafId = null;
+
+function cancelFinalCountAnim() {
+    finalCountRafId && (cancelAnimationFrame(finalCountRafId), finalCountRafId = null)
+}
+
+function animateFinalCount(e) {
+    cancelFinalCountAnim();
+    let t = document.getElementById("overlay-final");
+    if (!t) return;
+
+    let a = {
+            t: 0
+        }
+
+        ,
+        n = l => {
+            a.t || (a.t = l);
+            let r = Math.min(1, (l - a.t) / FINAL_COUNT_MS);
+            t.textContent = "Final VAT Reclaimed: €" + Math.floor(r * e),
+                finalCountRafId = r < 1 ? requestAnimationFrame(n) : null
+        }
+
+    ;
+    t.textContent = "Final VAT Reclaimed: €0",
+        finalCountRafId = requestAnimationFrame(n)
+}
+
+const SCORE_ANIM_MS = GV.hud.scoreAnimMs;
+let scoreAnimStart = 0,
+    scoreAnimFrom = 0,
+    scoreAnimTo = 0;
+
+function getDisplayedScore(e) {
+    if (0 === scoreAnimStart || scoreAnimTo <= scoreAnimFrom) return score;
+    let t = (e - scoreAnimStart) / SCORE_ANIM_MS;
+    return t >= 1 ? (scoreAnimStart = 0, scoreAnimFrom = scoreAnimTo, scoreAnimTo) : Math.floor(scoreAnimFrom + t * (scoreAnimTo - scoreAnimFrom))
+}
+
+function addScore(e) {
+    let t = performance.now(),
+        a = getDisplayedScore(t);
+    score += e,
+        scoreAnimFrom = a,
+        scoreAnimTo = score,
+        scoreAnimStart = t
+}
+
+const BASE_INVUL_MS = GV.player.invulMs;
+let invulEndAt = 0;
+
+// Coffee power-up: slows falling speed by 25% (i.e., 0.75x) for 10s
+const COFFEE_DURATION_MS = 10000;
+const COFFEE_MULTIPLIER = 0.5; // apply to fall speeds only (50% speed)
+let coffeeActiveUntil = 0;
+
+function isCoffeeActive() {
+    return performance.now() < coffeeActiveUntil;
+}
+
+function startCoffeeBuff() {
+    coffeeActiveUntil = performance.now() + COFFEE_DURATION_MS;
+    showFlickerMessage("JUICED!", COFFEE_DURATION_MS);
+}
+
+function startInvul() {
+    let e = Math.max(500, Math.round(BASE_INVUL_MS / difficultyMultiplier()));
+    invulEndAt = performance.now() + e
+}
+
+function isInvul() {
+    return performance.now() < invulEndAt
+}
+
+function clamp(e, t, a) {
+    return Math.max(t, Math.min(a, e))
+}
+
+function chance(e) {
+    return Math.random() < e
+}
+
+function difficultyMultiplier() {
+    return 1 + GV.difficulty.stepPerLevel * currentDifficultyLevel
+}
+
+function applyDifficulty() {
+    let e = difficultyMultiplier();
+    catcher.speed = baseCatcherSpeed * e;
+    let t = Math.max(GV.spawn.minInterval, Math.round(baseSpawnInterval / e));
+    t !== currentSpawnInterval && (currentSpawnInterval = t, spawnTimerId && (clearInterval(spawnTimerId), spawnTimerId = null), spawnTimerId = setInterval(spawnObject, currentSpawnInterval))
+}
+
+function recomputeDifficulty() {
+    let e = Math.floor(score / GV.difficulty.pointsPerLevel);
+    e !== currentDifficultyLevel && (currentDifficultyLevel = e, applyDifficulty())
+}
+
+let assets = {}
+
+;
+
+function createSpriteSet(e) {
+    let t = e => {
+        let t = new Image;
+        return t.src = `sprites/${e}.svg`,
+            t
+    }
+
+    ;
+
+    return {
+        invoice: t("invoice"),
+        fraud: t("fraud"),
+        audit: t("audit"),
+        deadlineFuel: t("deadlineFuel"),
+        coffee: t("coffee"),
+        catcher: t("catcher"),
+        controls: t("controls"),
+        v: t("v"),
+        a: t("a"),
+        t: t("t"),
+        i: t("i")
+    }
+}
+
+function drawTintedSprite(e, t, a, n, l, r, i) {
+    let s = drawTintedSprite._off || (drawTintedSprite._off = document.createElement("canvas")),
+        o = drawTintedSprite._offCtx || (drawTintedSprite._offCtx = s.getContext("2d"));
+    s.width = l,
+        s.height = r,
+        o.clearRect(0, 0, l, r),
+        o.drawImage(t, 0, 0, l, r),
+        o.globalCompositeOperation = "source-in",
+        o.fillStyle = i,
+        o.fillRect(0, 0, l, r),
+        o.globalCompositeOperation = "source-over",
+        e.drawImage(s, a, n)
+}
+
+function drawTintedSpriteThemed(e, t, a, n, l, r) {
+    let i = drawTintedSprite._off || (drawTintedSprite._off = document.createElement("canvas")),
+        s = drawTintedSprite._offCtx || (drawTintedSprite._offCtx = i.getContext("2d"));
+
+    if (i.width = l, i.height = r, s.clearRect(0, 0, l, r), s.drawImage(t, 0, 0, l, r), s.globalCompositeOperation = "source-in", "light" === currentTheme && window.GameValues && window.GameValues.colors) {
+        let o = s.createLinearGradient(0, 0, l, 0);
+        o.addColorStop(0, window.GameValues.colors.accentStart),
+            o.addColorStop(1, window.GameValues.colors.accentEnd),
+            s.fillStyle = o
+    } else s.fillStyle = hudColor;
+    s.fillRect(0, 0, l, r),
+        s.globalCompositeOperation = "source-over",
+        e.drawImage(i, a, n)
+}
+
+function refreshThemeColors() {
+    let e = getComputedStyle(document.body);
+    catcherColor = hudColor = e.getPropertyValue("--fg").trim() || "#fff"
+}
+
+function applyTheme(e) {
+    currentTheme = e,
+        document.body.setAttribute("data-theme", e),
+        localStorage.setItem("vatAttackTheme", e),
+        refreshThemeColors(),
+        assets = createSpriteSet(e)
+}
+
+function redrawOverlayIcon() {
+    let e = document.getElementById("overlay");
+    if (!e) return;
+    let t = e.getAttribute("data-mode");
+    if ("over" !== t) return;
+    let a = document.getElementById("overlay-message"),
+        n = document.getElementById("overlay-icon");
+    if (!a || !n) return;
+    let l = a.textContent || "",
+        r = n.getContext("2d");
+    r.clearRect(0, 0, n.width, n.height),
+        n.classList.add("hidden"),
+        n.style.display = "none";
+    let i = null;
+    if (/Fraud Alert/i.test(l) ? i = assets.fraud : /Ignored the Auditor/i.test(l) ? i = assets.audit : /Claims Overflow/i.test(l) && (i = assets.invoice), !i) return;
+
+    let s = () => {
+        i && i.complete && i.naturalWidth > 0 && (drawTintedSpriteThemed(r, i, 0, 0, n.width, n.height), n.classList.remove("hidden"), n.style.display = "block")
+    }
+
+    ;
+
+    i.complete && i.naturalWidth > 0 ? s() : i.addEventListener("load", s, {
+        once: !0
+    })
+}
+
+function renderStartMessage() {
+    let e = document.getElementById("overlay-message");
+    if (!e) return;
+    e.innerHTML = "";
+
+    let t = [{
+                img: () => assets.invoice,
+                text: "Gotta cath all 'em Invoices!"
+            }
+
+            ,
+            {
+                img: () => assets.fraud,
+                text: "Avoid fraudulent claims"
+            }
+
+            ,
+            {
+                img: () => assets.audit,
+                text: "Don't miss audit notices"
+            }
+
+            ,
+            {
+                img: () => assets.deadlineFuel,
+                text: "Dealine Fuel saves lives"
+            }
+
+            ,
+            {
+                img: () => assets.coffee,
+                text: "Coffee slows down time"
+            }
+
+            ,
+        ],
+        a = (t, a, n = e) => {
+            let l = document.createElement("div");
+            l.className = "start-line";
+            let r = document.createElement("canvas");
+            r.width = 24,
+                r.height = 24,
+                r.className = "icon-canvas",
+                l.appendChild(r);
+            let i = document.createElement("span");
+            i.textContent = a,
+                l.appendChild(i),
+                n.appendChild(l);
+
+            let s = t(),
+                o = () => {
+                    let e = r.getContext("2d");
+                    e.clearRect(0, 0, r.width, r.height),
+                        s && s.complete && s.naturalWidth > 0 && drawTintedSpriteThemed(e, s, 0, 0, r.width, r.height)
+                }
+
+            ;
+
+            s && (s.complete && s.naturalWidth > 0 ? o() : s.addEventListener("load", o, {
+                once: !0
+            }))
+        }
+
+        ,
+        n = document.createElement("div");
+    n.className = "start-block",
+        e.appendChild(n),
+        a(() => assets.controls, "Use A ← → D to move", n),
+        a(() => assets.controls, "Use [SPACE] to pause", n);
+    let l = document.createElement("div");
+    l.className = "start-sep",
+        e.appendChild(l),
+        t.forEach(e => a(e.img, e.text))
+}
+
+function spawnObject() {
+    if (!gameRunning || objects.length >= GV.limits.maxObjects) return;
+    let e = difficultyMultiplier(),
+        t = e,
+        a = 1 + Math.floor(t);
+    Math.random() < t - Math.floor(t) && (a += 1);
+
+    let n = () => objects.some(e => "audit" === e.type),
+        l = () => {
+            let e = currentDifficultyLevel,
+                t = Math.min(GV.probabilities.auditFraudCap, .1 * (1 + GV.probabilities.auditFraudScalePerLevel * e)),
+                a = Math.min(GV.probabilities.auditFraudCap, .1 * (1 + GV.probabilities.auditFraudScalePerLevel * e)),
+                // base weights: invoice (rest), deadlineFuel .1, coffee GV.probabilities.coffee, audit t, fraud a, vatit .05
+                n = 1 - (.1 + GV.probabilities.coffee + t + a + .05);
+            n = Math.max(GV.probabilities.invoiceMin, n);
+            let l = n + .1 + GV.probabilities.coffee + t + a + .05;
+
+            return {
+                invoice: n / l,
+                deadlineFuel: .1 / l,
+                coffee: GV.probabilities.coffee / l,
+                audit: t / l,
+                fraud: a / l,
+                vatit: .05 / l
+            }
+        }
+
+        ,
+        r = () => {
+            let {
+                invoice: e,
+                deadlineFuel: t,
+                coffee: c,
+                audit: a,
+                fraud: n,
+                vatit: r
+            } = l(),
+                i = Math.random(),
+                s = e,
+                o = s + t,
+                d = o + c,
+                h = d + a;
+            return i < s ? "invoice" : i < o ? "deadlineFuel" : i < d ? "coffee" : i < h ? "audit" : i < h + n ? "fraud" : "vatit"
+        }
+
+        ,
+        i = () => {
+            if (objects.length >= GV.limits.maxObjects) return;
+            let e = r();
+            "audit" === e && n() && (e = "invoice");
+
+            let t = {
+                    x: Math.random() * GV.spawnArea.width,
+                    y: -20,
+                    w: 40,
+                    h: 40,
+                    speed: GV.spawn.fallSpeedMin + Math.random() * GV.spawn.fallSpeedRange,
+                    type: e
+                }
+
+                ,
+                a = Math.min(GV.spawn.zigzagCap, GV.spawn.zigzagBase + GV.spawn.zigzagPerLevel * currentDifficultyLevel);
+            chance(a) && (t.zigzag = !0, t.zdir = .5 > Math.random() ? -1 : 1, t.zspeed = 1 + 1.5 * Math.random()),
+                "vatit" === e && (t.letter = vatitOrder[nextVatitIndex], nextVatitIndex = (nextVatitIndex + 1) % vatitOrder.length),
+                objects.push(t)
+        }
+
+    ;
+    for (let s = 0; s < a && !(objects.length >= GV.limits.maxObjects); s++) i()
+}
+
+function update() {
+    if (!gameRunning) return;
+
+    (keys.ArrowLeft || keys.KeyA) && (catcher.x -= catcher.speed),
+    (keys.ArrowRight || keys.KeyD) && (catcher.x += catcher.speed),
+    catcher.x = Math.max(0, Math.min(canvas.width - catcher.w, catcher.x));
+    const fallMul = isCoffeeActive() ? COFFEE_MULTIPLIER : 1;
+    objects.forEach(e => {
+            e.zigzag && (e.x += e.zspeed * e.zdir, e.x <= 0 ? (e.x = 0, e.zdir = 1) : e.x >= canvas.width - e.w && (e.x = canvas.width - e.w, e.zdir = -1)), e.y += e.speed * fallMul
+    });
+    let e = null;
+
+    if (objects = objects.filter(t => t.y > canvas.height ? ("invoice" === t.type && !isInvul() && --lives > 0 && startInvul(), "audit" === t.type && !isInvul() && (showFlickerMessage("MISSED AUDIT!", 1500), (lives -= 3) <= 0 && (e = "audit")), !1) : !(t.x < catcher.x + catcher.w) || !(t.x + t.w > catcher.x) || !(t.y < catcher.y + catcher.h) || !(t.y + t.h > catcher.y) || ("invoice" === t.type ? addScore(100) : "fraud" === t.type ? (!isInvul() && (lives -= 3) <= 0 && (e = "fraud"), showFlickerMessage("FRAUD ALERT!", 1500)) : "audit" === t.type ? addScore(500) : "deadlineFuel" === t.type ? isInvul() || (lives += 1) : "coffee" === t.type ? (startCoffeeBuff()) : "vatit" === t.type && (collectedVatitCount = Math.min(5, collectedVatitCount + 1), isInvul() || (lives += 1), addScore(1e3), collectedVatitCount >= 5 && (addScore(1e4), collectedVatitCount = 0, triggerBonusFlash(), showFlickerMessage("BONUS!", window.GameValues.bonus.durationMs)), startFlash()), !1)), lives <= 0 && ("audit" === e ? endGame("Ignored the Auditor!") : "fraud" === e ? endGame("Fraud Alert!") : endGame("Claims Overflow!")), gameRunning && recomputeDifficulty(), gameRunning) {
+        if (ctx.clearRect(0, 0, canvas.width, canvas.height), "playing" !== gameState) {
+            rafId = requestAnimationFrame(update);
+            return
+        }
+
+        // Draw flicker message first (behind everything)
+        ctx.save();
+        if (flickerMessage && performance.now() < flickerMessage.until) {
+            const now = performance.now();
+            const flickerMs = window.GameValues.bonus.flickerMs;
+            const show = Math.floor(now / flickerMs) % 2 === 0;
+            ctx.globalAlpha = show ? 1 : 0;
+            ctx.fillStyle = "light" === currentTheme ? hudGradient() : hudColor;
+            ctx.font = window.GameValues.bonus.font;
+            const text = flickerMessage.text;
+            const w = ctx.measureText(text).width;
+            const x = (canvas.width - w) / 2;
+            const y = canvas.height / 2;
+            ctx.fillText(text, x, y);
+        } else {
+            flickerMessage = null;
+        }
+        ctx.restore();
+
+        if (drawCatcher(), objects.forEach(e => {
+            let t = "vatit" === e.type ? assets[e.letter] : assets[e.type];
+            t && t.complete && t.naturalWidth > 0 ? drawTintedSpriteThemed(ctx, t, e.x, e.y, e.w, e.h) : (ctx.strokeStyle = hudColor, ctx.strokeRect(e.x, e.y, e.w, e.h))
+
+            }), drawHUD(), drawFlashOverlay(), drawBonusOverlay(), collectedVatitCount > 0) {
+            let t = 10;
+
+            for (let a = 0; a < collectedVatitCount; a++) {
+                let n = vatitOrder[a],
+                    l = assets[n];
+                l && l.complete && l.naturalWidth > 0 ? drawTintedSpriteThemed(ctx, l, t, 60, 20, 20) : (ctx.strokeStyle = hudColor, ctx.strokeRect(t, 60, 20, 20)), t += 24
+            }
+
+        }
+
+
+        rafId = requestAnimationFrame(update)
+    }
+}
+
+function drawCatcher() {
+    let e = isInvul(),
+        t = !e || Math.floor(performance.now() / 100) % 2 == 0;
+    t && (assets.catcher && assets.catcher.complete && assets.catcher.naturalWidth > 0 ? drawTintedSpriteThemed(ctx, assets.catcher, catcher.x, catcher.y, catcher.w, catcher.h) : (ctx.fillStyle = catcherColor, ctx.fillRect(catcher.x, catcher.y, catcher.w, catcher.h)))
+}
+
+function hudGradient() {
+    let e = ctx.createLinearGradient(0, 0, canvas.width, 0);
+    return e.addColorStop(0, window.GameValues.colors.accentStart),
+        e.addColorStop(1, window.GameValues.colors.accentEnd),
+        e
+}
+
+function drawHUD() {
+    ctx.fillStyle = "light" === currentTheme ? hudGradient() : hudColor, ctx.font = window.GameValues.hud.font;
+    let e = getDisplayedScore(performance.now());
+    ctx.fillText("VAT Reclaimed: €" + e, 10, 20),
+        ctx.fillText("Lives: " + lives, 10, 40)
+}
+
+function drawFlashOverlay() {
+    if (flashEndAt <= 0) return;
+    let e = performance.now(),
+        t = flashEndAt - e;
+
+    if (t > 0) {
+        let a = window.GameValues.flash.maxAlpha * Math.max(0, Math.min(1, t / FLASH_DURATION_MS));
+        ctx.save(),
+            ctx.globalAlpha = a;
+        let n = "dark" === currentTheme || /^#?fff$/i.test(hudColor.trim());
+        if (n) ctx.fillStyle = "#ffffff";
+
+        else {
+            let l = ctx.createLinearGradient(0, 0, canvas.width, 0);
+            l.addColorStop(0, window.GameValues.colors.accentStart),
+                l.addColorStop(1, window.GameValues.colors.accentEnd),
+                ctx.fillStyle = l
+        }
+
+        ctx.fillRect(0, 0, canvas.width, canvas.height),
+            ctx.restore()
+    } else flashEndAt = 0
+}
+
+function drawBonusOverlay() {
+    if (bonusEndAt <= 0) return;
+    let e = performance.now(),
+        t = bonusEndAt - e;
+
+    if (t > 0) {
+        let a = Math.floor(e / window.GameValues.bonus.flickerMs) % 2 == 0;
+        if (!a) return;
+        ctx.save(),
+            ctx.fillStyle = "light" === currentTheme ? hudGradient() : hudColor, ctx.font = window.GameValues.bonus.font;
+        let n = window.GameValues.bonus.text,
+            l = ctx.measureText(n).width,
+            r = (canvas.width - l) / 2,
+            i = canvas.height / 2;
+        ctx.fillText(n, r, i),
+            ctx.restore()
+    } else bonusEndAt = 0
+}
+
+function endGame(e) {
+    gameRunning = !1,
+        lives = Math.max(0, lives),
+        ctx.clearRect(0, 0, canvas.width, canvas.height);
+    let t = document.getElementById("overlay"),
+        a = document.getElementById("overlay-message");
+    document.getElementById("overlay-final");
+    let n = document.getElementById("overlay-high"),
+        l = t.querySelector(".title");
+    t.querySelector(".modal");
+    let r = document.getElementById("start-game"),
+        i = document.getElementById("play-again"),
+        s = document.getElementById("resume-game"),
+        o = document.getElementById("overlay-icon");
+    a.textContent = e,
+        animateFinalCount(score);
+    let d = document.getElementById("final-sep");
+    d && (d.style.display = "none");
+    let c = document.getElementById("sep-after-title");
+    c && (c.style.display = "none");
+    let u = document.getElementById("sep-after-high");
+
+    if (u && (u.style.display = "none"), o) {
+        let m = o.getContext("2d");
+        m.clearRect(0, 0, o.width, o.height),
+            o.classList.add("hidden"),
+            o.style.display = "none";
+        let f = null;
+        /Fraud Alert/i.test(e) ? f = assets.fraud : /Ignored the Auditor/i.test(e) ? f = assets.audit : /Claims Overflow/i.test(e) && (f = assets.invoice), f && f.complete && f.naturalWidth > 0 && (drawTintedSpriteThemed(m, f, 0, 0, o.width, o.height), o.classList.remove("hidden"), o.style.display = "block")
+    }
+
+    let p = score > highScore;
+    p && (highScore = score, localStorage.setItem("vatAttackHighScore", String(highScore))),
+        n && (n.textContent = p ? "New High Score: €" + highScore : "High Score: €" + highScore),
+        n && n.classList.toggle("new-high", p),
+        t.style.display = "flex",
+        gameState = "over",
+        t.setAttribute("data-mode", "over"),
+        l.textContent = "GAME OVER",
+        l.style.color = "var(--fg)",
+        r.classList.add("hidden"),
+        i.classList.remove("hidden"),
+        s && s.classList.add("hidden"),
+        spawnTimerId && (clearInterval(spawnTimerId), spawnTimerId = null),
+        rafId && (cancelAnimationFrame(rafId), rafId = null);
+    let h = document.getElementById("status");
+    h && (h.innerText = "")
+}
+
+function resetGame() {
+
+    score = 0,
+        lives = 3,
+        objects = [],
+        catcher.x = (canvas.width - catcher.w) / 2,
+        keys = {}
+
+        ,
+        collectedVatitCount = 0,
+        nextVatitIndex = 0,
+        bonusEndAt = 0,
+        flashEndAt = 0,
+        coffeeActiveUntil = 0,
+        cancelFinalCountAnim(),
+        scoreAnimStart = 0,
+        scoreAnimFrom = 0,
+        scoreAnimTo = 0,
+        document.getElementById("overlay").style.display = "none",
+        startGame()
+}
+
+function startGame() {
+    spawnTimerId && (clearInterval(spawnTimerId), spawnTimerId = null),
+        rafId && (cancelAnimationFrame(rafId), rafId = null),
+        gameRunning = !0,
+        gameState = "playing",
+        currentDifficultyLevel = Math.floor(score / 2e3),
+        currentSpawnInterval = baseSpawnInterval,
+        applyDifficulty(),
+        spawnTimerId || (spawnTimerId = setInterval(spawnObject, currentSpawnInterval)),
+        update()
+}
+
+function pauseGame() {
+    if (!gameRunning) return;
+    gameRunning = !1,
+        gameState = "paused",
+        spawnTimerId && (clearInterval(spawnTimerId), spawnTimerId = null),
+        rafId && (cancelAnimationFrame(rafId), rafId = null);
+    let e = document.getElementById("overlay"),
+        t = e.querySelector(".title");
+    e.querySelector(".modal");
+    let a = document.getElementById("overlay-message"),
+        n = document.getElementById("overlay-final"),
+        l = document.getElementById("overlay-high"),
+        r = document.getElementById("start-game"),
+        i = document.getElementById("play-again"),
+        s = document.getElementById("resume-game");
+    e.style.display = "flex",
+        e.setAttribute("data-mode", "paused"),
+        t.textContent = "Paused",
+        t.style.color = "var(--fg)",
+        a.textContent = "",
+        n.textContent = "Press Space to resume";
+    let o = document.getElementById("final-sep");
+    o && (o.style.display = "none");
+    let d = document.getElementById("sep-after-title");
+    d && (d.style.display = "none");
+    let c = document.getElementById("sep-after-high");
+    c && (c.style.display = "none"),
+        l && (l.textContent = "High Score: €" + highScore),
+        r.classList.add("hidden"),
+        i.classList.add("hidden"),
+        s.classList.remove("hidden"),
+        l && l.classList.remove("new-high");
+    let u = document.getElementById("overlay-icon");
+    u && (u.classList.add("hidden"), u.style.display = "none")
+}
+
+function resumeGame() {
+    let e = document.getElementById("overlay");
+    e.style.display = "none",
+        cancelFinalCountAnim(),
+        startGame()
+}
+
+document.addEventListener("keydown", e => {
+        keys[e.code] = !0
+
+    }),
+    document.addEventListener("keyup", e => keys[e.code] = !1),
+    document.addEventListener("DOMContentLoaded", () => {
+        let e = document.getElementById("start-game"),
+            t = document.getElementById("play-again"),
+            a = document.getElementById("resume-game"),
+            n = document.getElementById("overlay"),
+            l = n.querySelector(".title"),
+            r = n.querySelector(".modal");
+        document.getElementById("overlay-message");
+        let i = document.getElementById("overlay-final"),
+            s = document.getElementById("overlay-high"),
+            o = document.getElementById("theme-toggle"),
+            d = document.getElementById("overlay-icon");
+        applyTheme(currentTheme), ctx.imageSmoothingEnabled = !1, n.style.display = "flex", n.setAttribute("data-mode", "start"), l.textContent = "VAT ATTACK!", l.style.color = "var(--fg)";
+        let c = document.getElementById("sep-after-title");
+        c || ((c = document.createElement("div")).id = "sep-after-title", c.className = "start-sep", r.insertBefore(c, document.getElementById("overlay-message"))), c.style.display = "block", s && (r.insertBefore(s, document.getElementById("overlay-message")), s.textContent = "High Score: €" + highScore, s.classList.remove("new-high"));
+        let u = document.getElementById("sep-after-high");
+        u || ((u = document.createElement("div")).id = "sep-after-high", u.className = "start-sep", r.insertBefore(u, document.getElementById("overlay-message"))), u.style.display = "block", renderStartMessage(), i.textContent = "Press Start or Space to begin";
+        let m = document.getElementById("final-sep");
+        !m && ((m = document.createElement("div")).id = "final-sep", m.className = "start-sep", i && i.parentNode && i.parentNode.insertBefore(m, i)), m && (m.style.display = "block"), e.classList.remove("hidden"), t.classList.add("hidden"), a.classList.add("hidden"), r && r.classList.remove("new-high"), d && (d.classList.add("hidden"), d.style.display = "none"), e && e.addEventListener("click", resetGame), t && t.addEventListener("click", resetGame), a && a.addEventListener("click", () => resumeGame()), o && o.addEventListener("click", () => {
+            applyTheme("dark" === currentTheme ? "light" : "dark");
+            let e = n.getAttribute("data-mode");
+            "start" === e ? renderStartMessage() : "over" === e && redrawOverlayIcon()
+
+        }), document.addEventListener("keydown", e => {
+            let t = "flex" === n.style.display,
+                a = n.getAttribute("data-mode");
+            t && ("start" === a && "Space" === e.code ? (e.preventDefault(), "function" == typeof e.stopImmediatePropagation ? e.stopImmediatePropagation() : "function" == typeof e.stopPropagation && e.stopPropagation(), resetGame()) : "over" === a && ("Enter" === e.code || "Space" === e.code) ? (e.preventDefault(), "function" == typeof e.stopImmediatePropagation ? e.stopImmediatePropagation() : "function" == typeof e.stopPropagation && e.stopPropagation(), resetGame()) : "paused" === a && "Space" === e.code && (e.preventDefault(), "function" == typeof e.stopImmediatePropagation ? e.stopImmediatePropagation() : "function" == typeof e.stopPropagation && e.stopPropagation(), resumeGame()))
+
+        }), document.addEventListener("keydown", e => {
+            if ("Space" !== e.code) return;
+            let t = "flex" === n.style.display;
+            !t && "playing" === gameState && (e.preventDefault(), gameRunning && pauseGame())
+        })
+    });
