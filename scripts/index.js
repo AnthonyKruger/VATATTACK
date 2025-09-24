@@ -280,7 +280,7 @@ function renderStartMessage() {
             ,
             {
                 img: () => assets.deadlineFuel,
-                text: "Dealine Fuel saves lives"
+                text: "Deadline Fuel saves lives"
             }
 
             ,
